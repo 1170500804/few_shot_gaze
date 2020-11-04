@@ -20,7 +20,7 @@ from .densenet import (
     DenseNetTransitionDown,
 )
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class DTED(nn.Module):
@@ -47,7 +47,7 @@ class DTED(nn.Module):
             assert self.normalize_3d_codes_axis is not None
 
         # Define feature map dimensions at bottleneck
-        bottleneck_shape = (2, 8)
+        bottleneck_shape = (2, 2)
         self.bottleneck_shape = bottleneck_shape
 
         # The meaty parts
@@ -57,6 +57,7 @@ class DTED(nn.Module):
             activation_fn=activation_fn,
             normalization_fn=normalization_fn,
         )
+        # TODO: what is c_now?: c_now is the current channel num of densenet
         c_now = list(self.children())[-1].c_now
         self.decoder_input_c = decoder_input_c
         enc_num_all = np.prod(bottleneck_shape) * self.decoder_input_c
@@ -70,19 +71,19 @@ class DTED(nn.Module):
         )
 
         # The latent code parts
-        self.z_dim_app = z_dim_app
-        self.z_dim_gaze = z_dim_gaze
-        self.z_dim_head = z_dim_head
+        self.z_dim_app = z_dim_app # default 64
+        self.z_dim_gaze = z_dim_gaze # default 2
+        self.z_dim_head = z_dim_head # default 16
         z_num_all = 3 * (z_dim_gaze + z_dim_head) + z_dim_app
 
-        self.fc_enc = self.linear(c_now, z_num_all)
-        self.fc_dec = self.linear(z_num_all, enc_num_all)
+        self.fc_enc = self.linear(c_now, z_num_all) # [, 118]
+        self.fc_dec = self.linear(z_num_all, enc_num_all) # [118, 2*2*16]
 
-        self.build_gaze_layers(3 * z_dim_gaze)
+        # self.build_gaze_layers(3 * z_dim_gaze)
 
-    def build_gaze_layers(self, num_input_neurons, num_hidden_neurons=64):
-        self.gaze1 = self.linear(num_input_neurons, self.gaze_hidden_layer_neurons)
-        self.gaze2 = self.linear(self.gaze_hidden_layer_neurons, 3)
+    # def build_gaze_layers(self, num_input_neurons, num_hidden_neurons=64):
+    #     self.gaze1 = self.linear(num_input_neurons, self.gaze_hidden_layer_neurons)
+    #     self.gaze2 = self.linear(self.gaze_hidden_layer_neurons, 3)
 
     def linear(self, f_in, f_out):
         fc = nn.Linear(f_in, f_out)
@@ -90,38 +91,49 @@ class DTED(nn.Module):
         nn.init.constant(fc.bias.data, val=0)
         return fc
 
-    def rotate_code(self, data, code, mode, fr=None, to=None):
-        """Must calculate transposed rotation matrices to be able to
-           post-multiply to 3D codes."""
-        key_stem = 'R_' + mode
-        if fr is not None and to is not None:
-            rotate_mat = torch.matmul(
-                data[key_stem + '_' + fr],
-                torch.transpose(data[key_stem + '_' + to], 1, 2)
-            )
-        elif to is not None:
-            rotate_mat = torch.transpose(data[key_stem + '_' + to], 1, 2)
-        elif fr is not None:
-            # transpose-of-inverse is itself
-            rotate_mat = data[key_stem + '_' + fr]
-        return torch.matmul(code, rotate_mat)
+
+
+    # def rotate_code(self, data, code, mode, fr=None, to=None):
+    #     """Must calculate transposed rotation matrices to be able to
+    #        post-multiply to 3D codes."""
+    #     key_stem = 'R_' + mode
+    #     if fr is not None and to is not None:
+    #         rotate_mat = torch.matmul(
+    #             data[key_stem + '_' + fr],
+    #             torch.transpose(data[key_stem + '_' + to], 1, 2)
+    #         )
+    #     elif to is not None:
+    #         rotate_mat = torch.transpose(data[key_stem + '_' + to], 1, 2)
+    #     elif fr is not None:
+    #         # transpose-of-inverse is itself
+    #         rotate_mat = data[key_stem + '_' + fr]
+    #     return torch.matmul(code, rotate_mat)
 
     def encode_to_z(self, data, suffix):
+        # TODO: change image name
         x = self.encoder(data['image_' + suffix])
-        enc_output_shape = x.shape
+        # enc_output_shape = x.shape
         x = x.mean(-1).mean(-1)  # Global-Average Pooling
 
         # Create latent codes
         z_all = self.fc_enc(x)
+        # [n, 64]
         z_app = z_all[:, :self.z_dim_app]
-        z_all = z_all[:, self.z_dim_app:]
-        z_all = z_all.view(self.batch_size, -1, 3)
-        z_gaze_enc = z_all[:, :self.z_dim_gaze, :]
-        z_head_enc = z_all[:, self.z_dim_gaze:, :]
+        z_gaze = z_all[:, self.z_dim_app:]
 
-        z_gaze_enc = z_gaze_enc.view(self.batch_size, -1, 3)
-        z_head_enc = z_head_enc.view(self.batch_size, -1, 3)
-        return [z_app, z_gaze_enc, z_head_enc, x, enc_output_shape]
+        # # [n, 16+2, 3]
+        # z_all = z_all.view(self.batch_size, -1, 3)
+        # # [n, 2, 3]
+        # z_gaze_enc = z_all[:, :self.z_dim_gaze, :]
+        # # [n, 16, 3]
+        # z_head_enc = z_all[:, self.z_dim_gaze:, :]
+
+        # z_gaze_enc = z_gaze_enc.view(self.batch_size, -1, 3)
+        # z_head_enc = z_head_enc.view(self.batch_size, -1, 3)
+        # return [z_app, z_gaze_enc, z_head_enc, x, enc_output_shape]
+
+        return [z_app, z_gaze, x]
+
 
     def decode_to_image(self, codes):
         z_all = torch.cat([code.view(self.batch_size, -1) for code in codes], dim=1)
@@ -145,72 +157,56 @@ class DTED(nn.Module):
         return code
 
     def forward(self, data, loss_functions=None):
-        is_inference_time = ('image_b' not in data)
+        is_pretrain = ('image_b' in data)
         self.batch_size = data['image_a'].shape[0]
 
         # Encode input from a
-        (z_a_a, ze1_g_a, ze1_h_a, ze1_before_z_a, _) = self.encode_to_z(data, 'a')
-        if not is_inference_time:
-            z_a_b, ze1_g_b, ze1_h_b, _, _ = self.encode_to_z(data, 'b')
-
-        # Make each row a unit vector through L2 normalization to constrain
-        # embeddings to the surface of a hypersphere
-        if self.normalize_3d_codes:
-            assert ze1_g_a.dim() == ze1_h_a.dim() == 3
-            assert ze1_g_a.shape[-1] == ze1_h_a.shape[-1] == 3
-            ze1_g_a = self.maybe_do_norm(ze1_g_a)
-            ze1_h_a = self.maybe_do_norm(ze1_h_a)
-            if not is_inference_time:
-                ze1_g_b = self.maybe_do_norm(ze1_g_b)
-                ze1_h_b = self.maybe_do_norm(ze1_h_b)
-
-        # Gaze estimation output for image a
-        if self.backprop_gaze_to_encoder:
-            gaze_features = ze1_g_a.clone().view(self.batch_size, -1)
-        else:
-            # Detach input embeddings from graph!
-            gaze_features = ze1_g_a.detach().view(self.batch_size, -1)
-        gaze_a_hat = self.gaze2(F.relu_(self.gaze1(gaze_features)))
-        gaze_a_hat = F.normalize(gaze_a_hat, dim=-1)
+        # [app, gaze, global_avg_pool]
+        (z_a_a, z_g_a, x_a) = self.encode_to_z(data, 'a')
 
         output_dict = {
-            'gaze_a_hat': gaze_a_hat,
+            # 'gaze_a_hat': gaze_a_hat,
             'z_app': z_a_a,
-            'z_gaze_enc': ze1_g_a,
-            'z_head_enc': ze1_h_a,
-            'canon_z_gaze_a': self.rotate_code(data, ze1_g_a, 'gaze', fr='a'),
-            'canon_z_head_a': self.rotate_code(data, ze1_h_a, 'head', fr='a'),
+            'z_gaze_enc': z_g_a,
         }
-        if 'R_gaze_b' not in data:
+
+        #  if  is not pretrain : return only feature embedding
+        if not is_pretrain:
             return output_dict
 
-        if not is_inference_time:
-            output_dict['canon_z_gaze_b'] = self.rotate_code(data, ze1_g_b, 'gaze', fr='b')
-            output_dict['canon_z_head_b'] = self.rotate_code(data, ze1_h_b, 'head', fr='b')
+        else:
+            z_a_b, z_g_b, x_b = self.encode_to_z(data, 'b')
+            # Reconstruct
+            x_a_hat = self.decode_to_image([z_a_a, z_g_a])
+            x_b_hat = self.decode_to_image([z_a_b, z_g_b])
+            s_a = self.decode_to_image(([z_a_b, z_g_a]))
+            s_b = self.decode_to_image([z_a_a,z_g_b])
 
-        # Rotate codes
-        zd1_g_b = self.rotate_code(data, ze1_g_a, 'gaze', fr='a', to='b')
-        zd1_h_b = self.rotate_code(data, ze1_h_a, 'head', fr='a', to='b')
-        output_dict['z_gaze_dec'] = zd1_g_b
-        output_dict['z_head_dec'] = zd1_h_b
+            # if is ptrtrain : return all four images
+            output_dict = {
+                # 'gaze_a_hat': gaze_a_hat,
+                'r_a': x_a_hat,
+                'r_b': x_b_hat,
+                's_a': s_a,
+                's_b': s_b,
+                'z_app': z_a_a,
+                'z_gaze_enc': z_g_a,
+            }
 
-        # Reconstruct
-        x_b_hat = self.decode_to_image([z_a_a, zd1_g_b, zd1_h_b])
-        output_dict['image_b_hat'] = x_b_hat
 
-        # If loss functions specified, apply them
-        if loss_functions is not None:
-            losses_dict = OrderedDict()
-            for key, func in loss_functions.items():
-                losses = func(data, output_dict)  # may be dict or single value
-                if isinstance(losses, dict):
-                    for sub_key, loss in losses.items():
-                        losses_dict[key + '_' + sub_key] = loss
-                else:
-                    losses_dict[key] = losses
-            return output_dict, losses_dict
+            # If loss functions specified, apply them
+            if loss_functions is not None:
+                losses_dict = OrderedDict()
+                for key, func in loss_functions.items():
+                    losses = func(data, output_dict)  # may be dict or single value
+                    if isinstance(losses, dict):
+                        for sub_key, loss in losses.items():
+                            losses_dict[key + '_' + sub_key] = loss
+                    else:
+                        losses_dict[key] = losses
+                return output_dict, losses_dict
 
-        return output_dict
+            return output_dict
 
 
 class DenseNetEncoder(nn.Module):

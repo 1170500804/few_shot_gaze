@@ -82,6 +82,7 @@ parser.add_argument('--print-freq-test', type=int, default=5000, metavar='N',
                     help='print test statistics after every N iterations (default: 5000)')
 
 # data
+# TODO: change file
 parser.add_argument('--mpiigaze-file', type=str, default='../preprocess/outputs/MPIIGaze.h5',
                     help='Path to MPIIGaze dataset in HDF format.')
 parser.add_argument('--gazecapture-file', type=str, default='../preprocess/outputs/GazeCapture.h5',
@@ -94,6 +95,7 @@ parser.add_argument('--num-data-loaders', type=int, default=0, metavar='N',
 # logging
 parser.add_argument('--use-tensorboard', action='store_true', default=False,
                     help='create tensorboard logs (stored in the args.save_path directory)')
+# TODO: change log dir
 parser.add_argument('--save-path', type=str, default='.',
                     help='path to save network parameters (default: .)')
 parser.add_argument('--show-warnings', action='store_true', default=False,
@@ -134,7 +136,7 @@ logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 from data import HDFDataset
 
 # Set device
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Ignore warnings
 if not args.show_warnings:
@@ -143,7 +145,7 @@ if not args.show_warnings:
 
 #############################
 # Sanity check some arguments
-
+# TODO: We don't need to many losses
 if args.embedding_consistency_loss_type is not None:
     assert args.triplet_loss_type is None
 if args.triplet_loss_type is not None:
@@ -219,6 +221,7 @@ network = network.to(device)
 ################################################
 # Build optimizers
 gaze_lr = 1.0 * args.base_lr
+args.backprop_gaze_to_encoder = False
 if args.backprop_gaze_to_encoder:
     optimizer = optim.SGD(
         [
@@ -238,6 +241,7 @@ else:
     )
 
     # one additional optimizer for just gaze estimation head
+    # TODO: Do not need this additional optimizer
     gaze_optimizer = optim.SGD(
         [p for n, p in network.named_parameters() if n.startswith('gaze')],
         lr=gaze_lr, momentum=0.9,
@@ -267,6 +271,7 @@ if torch.cuda.device_count() > 1:
 
 ################################################
 # Define loss functions
+# TODO: We don't need to many losses
 from losses import (ReconstructionL1Loss, GazeAngularLoss, BatchHardTripletLoss,
                     AllFrontalsEqualLoss, EmbeddingConsistencyLoss)
 
@@ -288,6 +293,7 @@ if args.embedding_consistency_loss_type is not None:
         distance_type=args.embedding_consistency_loss_type,
     )
 
+# TODO: change the training set
 ################################################
 # Create the train and test datasets.
 # We train on the GazeCapture training set
@@ -400,7 +406,7 @@ for tag, data_dict in all_data.items():
 
 #################################
 # Latent Space Walk Preparations
-
+# TODO: DO not need
 
 def R_x(theta):
     sin_ = np.sin(theta)
@@ -421,7 +427,7 @@ def R_y(phi):
         [-sin_, 0., cos_]
     ]). astype(np.float32)
 
-
+# TODO: for walking stats
 walking_spec = []
 for rotation_fn, short, min_d, max_d, num_d in [(R_x, 'x', 45, -45, 15),
                                                 (R_y, 'y', -45, 45, 15)]:
@@ -551,6 +557,7 @@ def execute_training_step(current_step):
             loss_dict[key] = value
 
     # Construct main loss
+    # TODO: change loss, only need reconstruction loss, may could be directly deleted
     loss_to_optimize = args.coeff_l1_recon_loss * loss_dict['recon_l1']
     if args.triplet_loss_type is not None:
         triplet_losses = []
@@ -594,6 +601,7 @@ def execute_training_step(current_step):
     optimizer.step()
 
     # optimize small gaze part too, separately (if required)
+    # TODO: May not need
     if not args.backprop_gaze_to_encoder:
         if args.use_apex:
             with amp.scale_loss(loss_dict['gaze'], gaze_optimizer) as scaled_loss:

@@ -74,7 +74,11 @@ class HDFDataset(Dataset):
             self.hdf = None
 
     def preprocess_image(self, image):
+        # denote that the dt_ed model in Faze's input is [64*256] with two eyes
+        # however that our input is single eye
+        image = cv.resize(image,(64,64))
         ycrcb = cv.cvtColor(image, cv.COLOR_RGB2YCrCb)
+
         ycrcb[:, :, 0] = cv.equalizeHist(ycrcb[:, :, 0])
         image = cv.cvtColor(ycrcb, cv.COLOR_YCrCb2RGB)
         image = np.transpose(image, [2, 0, 1])  # Colour image
@@ -108,24 +112,6 @@ class HDFDataset(Dataset):
             h = group['labels'][index, 2:4]
             return eyes, g, h
 
-        # Functions to calculate relative rotation matrices for gaze dir. and head pose
-        def R_x(theta):
-            sin_ = np.sin(theta)
-            cos_ = np.cos(theta)
-            return np.array([
-                [1., 0., 0.],
-                [0., cos_, -sin_],
-                [0., sin_, cos_]
-            ]). astype(np.float32)
-
-        def R_y(phi):
-            sin_ = np.sin(phi)
-            cos_ = np.cos(phi)
-            return np.array([
-                [cos_, 0., sin_],
-                [0., 1., 0.],
-                [-sin_, 0., cos_]
-            ]). astype(np.float32)
 
         def vector_to_pitchyaw(vectors):
             n = vectors.shape[0]
@@ -145,28 +131,24 @@ class HDFDataset(Dataset):
             out[:, 2] = np.multiply(cos[:, 0], cos[:, 1])
             return out
 
-        def calculate_rotation_matrix(e):
-            return np.matmul(R_y(e[1]), R_x(e[0]))
 
         # Grab 1st (input) entry
         eyes_a, g_a, h_a = retrieve(group_a, idx_a)
         entry = {
-            'key': key_a,
-            'key_index': self.prefixes.index(key_a),
+            # 'key': key_a,
+            # 'key_index': self.prefixes.index(key_a),
             'image_a': eyes_a,
-            'gaze_a': g_a,
-            'head_a': h_a,
-            'R_gaze_a': calculate_rotation_matrix(g_a),
-            'R_head_a': calculate_rotation_matrix(h_a),
+            # 'gaze_a': g_a,
+            # 'head_a': h_a,
+
         }
 
         if self.get_2nd_sample:
             # Grab 2nd entry from same person
             eyes_b, g_b, h_b = retrieve(group_b, idx_b)
             entry['image_b'] = eyes_b
-            entry['gaze_b'] = g_b
-            entry['head_b'] = h_b
-            entry['R_gaze_b'] = calculate_rotation_matrix(entry['gaze_b'])
-            entry['R_head_b'] = calculate_rotation_matrix(entry['head_b'])
+            # entry['gaze_b'] = g_b
+            # entry['head_b'] = h_b
+
 
         return self.preprocess_entry(entry)
